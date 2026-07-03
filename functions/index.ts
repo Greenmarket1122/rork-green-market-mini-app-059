@@ -1,0 +1,524 @@
+// functions/index.ts — Green Market Telegram bot backend
+// Admin panel + product/settings management v2
+//
+// Handles:
+//   POST   /api/order         — create order, persist via OrderStore DO, notify Telegram
+//   GET    /api/order/:num    — fetch order by number
+//   PATCH  /api/order/:num    — update order status (admin)
+//   GET    /api/orders        — list recent orders (admin)
+//   GET    /api/products      — list all products (public)
+//   POST   /api/products      — create product (admin)
+//   PATCH  /api/products/:id  — update product (admin)
+//   DELETE /api/products/:id  — delete product (admin)
+//   GET    /api/settings      — get shop settings (public, password hidden)
+//   PUT    /api/settings      — update shop settings (admin)
+//   POST   /api/admin/verify  — verify admin password
+//   GET    /api/categories    — list categories
+//   POST   /webhook           — Telegram bot webhook (captures admin chat_id, sends order updates)
+//   GET    /ping              — health check
+
+import { OrderStore, type Order } from "./order-store";
+
+export { OrderStore };
+
+type Env = {
+  DO: Fetcher;
+  TELEGRAM_BOT_TOKEN: string;
+  TELEGRAM_CHAT_ID: string;
+};
+
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+  });
+}
+
+function formatOrderMessage(order: Order): string {
+  const items = order.items
+    .map((i) => `  ${i.emoji} ${i.name} ×${i.qty} — ${formatUZS(i.price * i.qty)}`)
+    .join("\n");
+
+  const locationLine =
+    order.address.lat !== undefined && order.address.lng !== undefined
+      ? `\n📍 Lokatsiya: https://yandex.uz/maps/?ll=${order.address.lng}%2C${order.address.lat}&z=17&pt=${order.address.lng},${order.address.lat},pm2rdm`
+      : "";
+
+  const paymentLabel =
+    order.payment === "payme"
+      ? "Payme"
+      : order.payment === "click"
+        ? "Click"
+        : "Naqd (kuryerga)";
+
+  const courierLabel =
+    order.courier === "yandex" ? "Yandex kuryer" : "Milenium";
+
+  return (
+    `🛒 Yangi buyurtma #${order.orderNumber}\n` +
+    `━━━━━━━━━━━━━━━━\n` +
+    `👤 Mijoz: ${order.address.fullName}\n` +
+    `📞 Tel: ${order.address.phone}\n` +
+    `💬 Telegram: ${order.customerName ?? "—"}` +
+    (order.customerUsername ? ` (@${order.customerUsername})` : "") +
+    `\n\n📦 Mahsulotlar:\n${items}\n\n` +
+    `💰 Jami: ${formatUZS(order.total)}\n` +
+    `💳 To'lov: ${paymentLabel}\n` +
+    `🚚 Kuryer: ${courierLabel}\n` +
+    `━━━━━━━━━━━━━━━━\n` +
+    `🏠 Manzil: ${order.address.street}, ${order.address.city}` +
+    locationLine +
+    `\n\n🕐 ${new Date(order.createdAt).toLocaleString("ru-RU", { timeZone: "Asia/Tashkent" })}`
+  );
+}
+
+function formatUZS(amount: number): string {
+  return new Intl.NumberFormat("ru-RU").format(amount) + " so'm";
+}
+
+async function sendTelegramMessage(
+  token: string,
+  chatId: string,
+  text: string,
+): Promise<boolean> {
+  try {
+    const resp = await fetch(
+      `https://api.telegram.org/bot${token}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          parse_mode: "HTML",
+          disable_web_page_preview: false,
+        }),
+      },
+    );
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+
+    // CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    // Health check
+    if (url.pathname === "/ping") {
+      return json({ ok: true, now: new Date().toISOString() });
+    }
+
+    // ─── Telegram bot webhook ───────────────────────────────────
+    // Handles:
+    //   /start from admin → capture & store their chat_id
+    //   /start from customer → welcome message
+    //   /status <order_number> → check order status
+    if (url.pathname === "/webhook" && request.method === "POST") {
+      try {
+        const update = (await request.json()) as {
+          message?: {
+            chat: { id: number; type: string };
+            from?: { id: number; first_name: string; username?: string };
+            text?: string;
+          };
+        };
+        const msg = update.message;
+        if (!msg || !msg.text) return json({ ok: true });
+
+        const chatId = String(msg.chat.id);
+        const text = msg.text.trim();
+
+        if (text.startsWith("/start")) {
+          // Store the chat ID — whoever sends /start becomes the admin recipient
+          const storeReq = new Request("https://do/chat-id", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Rork-DO-Class": "OrderStore",
+              "X-Rork-DO-Id": "global",
+            },
+            body: JSON.stringify({ chatId }),
+          });
+          await env.DO.fetch(storeReq);
+
+          const name = msg.from?.first_name ?? "Do'stim";
+          await sendTelegramMessage(
+            env.TELEGRAM_BOT_TOKEN,
+            chatId,
+            `Assalomu alaykum, ${name}! 👋\n\n` +
+              `<b>Green Market</b> botiga xush kelibsiz!\n\n` +
+              `🛒 Buyurtmalarni mini app orqali qabul qilamiz.`,
+          );
+          return json({ ok: true });
+        }
+
+        if (text.startsWith("/status")) {
+          const orderNum = text.split(" ")[1];
+          if (!orderNum) {
+            await sendTelegramMessage(
+              env.TELEGRAM_BOT_TOKEN,
+              chatId,
+              "Iltimos, buyurtma raqamini kiriting.\nMisol: `/status GM-000001`",
+            );
+            return json({ ok: true });
+          }
+          const storeReq = new Request(`https://do/order/${orderNum}`, {
+            method: "GET",
+            headers: {
+              "X-Rork-DO-Class": "OrderStore",
+              "X-Rork-DO-Id": "global",
+            },
+          });
+          const resp = await env.DO.fetch(storeReq);
+          const result = (await resp.json()) as { ok: boolean; order?: Order };
+          if (!result.ok || !result.order) {
+            await sendTelegramMessage(
+              env.TELEGRAM_BOT_TOKEN,
+              chatId,
+              `Buyurtma #${orderNum} topilmadi ❌`,
+            );
+            return json({ ok: true });
+          }
+          const order = result.order;
+          await sendTelegramMessage(
+            env.TELEGRAM_BOT_TOKEN,
+            chatId,
+            `📦 Buyurtma #${order.orderNumber}\n` +
+              `Holat: ${order.status}\n` +
+              `Mijoz: ${order.address.fullName}\n` +
+              `Jami: ${formatUZS(order.total)}\n` +
+              `Manzil: ${order.address.street}, ${order.address.city}`,
+          );
+          return json({ ok: true });
+        }
+
+        // Order status update commands from admin
+        const statusMatch = text.match(
+          /^\/(accept|deliver|done)\s+(GM-\d+)/i,
+        );
+        if (statusMatch) {
+          const [, cmd, orderNum] = statusMatch;
+          const statusMap: Record<string, string> = {
+            accept: "Qabul qilindi",
+            deliver: "Yo'lda",
+            done: "Yetkazildi",
+          };
+          const newStatus = statusMap[cmd.toLowerCase()] ?? "Yangi";
+          const storeReq = new Request(`https://do/order/${orderNum}`, {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Rork-DO-Class": "OrderStore",
+              "X-Rork-DO-Id": "global",
+            },
+            body: JSON.stringify({ status: newStatus }),
+          });
+          const resp = await env.DO.fetch(storeReq);
+          const result = (await resp.json()) as { ok: boolean; order?: Order };
+          if (result.ok && result.order) {
+            // Also notify the customer if we have their telegram ID
+            if (result.order.telegramUserId) {
+              await sendTelegramMessage(
+                env.TELEGRAM_BOT_TOKEN,
+                String(result.order.telegramUserId),
+                `📦 Buyurtma #${result.order.orderNumber} holati yangilandi:\n` +
+                  `✅ ${newStatus}`,
+              );
+            }
+            await sendTelegramMessage(
+              env.TELEGRAM_BOT_TOKEN,
+              chatId,
+              `✅ Buyurtma #${orderNum} holati o'zgartirildi: ${newStatus}`,
+            );
+          } else {
+            await sendTelegramMessage(
+              env.TELEGRAM_BOT_TOKEN,
+              chatId,
+              `Buyurtma #${orderNum} topilmadi ❌`,
+            );
+          }
+          return json({ ok: true });
+        }
+
+        return json({ ok: true });
+      } catch (err) {
+        console.error("webhook error", err);
+        return json({ ok: true });
+      }
+    }
+
+    // ─── Create order ───────────────────────────────────────────
+    if (url.pathname === "/api/order" && request.method === "POST") {
+      try {
+        const orderData = (await request.json()) as Omit<
+          Order,
+          "orderNumber" | "status" | "createdAt"
+        >;
+
+        // Persist via DO
+        const storeReq = new Request("https://do/order", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Rork-DO-Class": "OrderStore",
+            "X-Rork-DO-Id": "global",
+          },
+          body: JSON.stringify(orderData),
+        });
+        const resp = await env.DO.fetch(storeReq);
+        const result = (await resp.json()) as { ok: boolean; order: Order };
+        if (!result.ok || !result.order) {
+          return json({ ok: false, error: "Buyurtma yaratishda xatolik" }, 500);
+        }
+
+        const order = result.order;
+
+        // Send notification to Telegram
+        // 1) Try the env var TELEGRAM_CHAT_ID first
+        // 2) Fall back to the stored admin chat_id from /start
+        let targetChatId = env.TELEGRAM_CHAT_ID || "";
+        if (!targetChatId) {
+          const chatIdReq = new Request("https://do/chat-id", {
+            method: "GET",
+            headers: {
+              "X-Rork-DO-Class": "OrderStore",
+              "X-Rork-DO-Id": "global",
+            },
+          });
+          const chatIdResp = await env.DO.fetch(chatIdReq);
+          const chatResult = (await chatIdResp.json()) as {
+            ok: boolean;
+            chatId: string | null;
+          };
+          targetChatId = chatResult.chatId ?? "";
+        }
+
+        if (targetChatId) {
+          const message = formatOrderMessage(order);
+          const sent = await sendTelegramMessage(
+            env.TELEGRAM_BOT_TOKEN,
+            targetChatId,
+            message,
+          );
+          if (!sent) {
+            console.warn("Telegram message failed to send");
+          }
+        } else {
+          console.warn(
+            "No target chat ID — admin must send /start to the bot first",
+          );
+        }
+
+        return json({ ok: true, order });
+      } catch (err) {
+        console.error("order creation error", err);
+        return json({ ok: false, error: "Server xatoligi" }, 500);
+      }
+    }
+
+    // ─── Get single order ───────────────────────────────────────
+    if (
+      url.pathname.startsWith("/api/order/") &&
+      request.method === "GET"
+    ) {
+      const orderNum = decodeURIComponent(
+        url.pathname.slice("/api/order/".length),
+      );
+      const storeReq = new Request(`https://do/order/${orderNum}`, {
+        method: "GET",
+        headers: {
+          "X-Rork-DO-Class": "OrderStore",
+          "X-Rork-DO-Id": "global",
+        },
+      });
+      const resp = await env.DO.fetch(storeReq);
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
+    // ─── List recent orders ─────────────────────────────────────
+    if (url.pathname === "/api/orders" && request.method === "GET") {
+      const storeReq = new Request("https://do/orders", {
+        method: "GET",
+        headers: {
+          "X-Rork-DO-Class": "OrderStore",
+          "X-Rork-DO-Id": "global",
+        },
+      });
+      const resp = await env.DO.fetch(storeReq);
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
+    // ─── Products: public list ──────────────────────────────────
+    if (url.pathname === "/api/products" && request.method === "GET") {
+      const storeReq = new Request("https://do/products", {
+        method: "GET",
+        headers: {
+          "X-Rork-DO-Class": "OrderStore",
+          "X-Rork-DO-Id": "global",
+        },
+      });
+      const resp = await env.DO.fetch(storeReq);
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
+    // ─── Products: create (admin) ───────────────────────────────
+    if (url.pathname === "/api/products" && request.method === "POST") {
+      const body = await request.json();
+      const storeReq = new Request("https://do/products", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Rork-DO-Class": "OrderStore",
+          "X-Rork-DO-Id": "global",
+        },
+        body: JSON.stringify(body),
+      });
+      const resp = await env.DO.fetch(storeReq);
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
+    // ─── Products: update (admin) ───────────────────────────────
+    if (
+      url.pathname.startsWith("/api/products/") &&
+      request.method === "PATCH"
+    ) {
+      const id = decodeURIComponent(
+        url.pathname.slice("/api/products/".length),
+      );
+      const body = await request.json();
+      const storeReq = new Request(`https://do/products/${id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Rork-DO-Class": "OrderStore",
+          "X-Rork-DO-Id": "global",
+        },
+        body: JSON.stringify(body),
+      });
+      const resp = await env.DO.fetch(storeReq);
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
+    // ─── Products: delete (admin) ───────────────────────────────
+    if (
+      url.pathname.startsWith("/api/products/") &&
+      request.method === "DELETE"
+    ) {
+      const id = decodeURIComponent(
+        url.pathname.slice("/api/products/".length),
+      );
+      const storeReq = new Request(`https://do/products/${id}`, {
+        method: "DELETE",
+        headers: {
+          "X-Rork-DO-Class": "OrderStore",
+          "X-Rork-DO-Id": "global",
+        },
+      });
+      const resp = await env.DO.fetch(storeReq);
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
+    // ─── Settings: public GET ───────────────────────────────────
+    if (url.pathname === "/api/settings" && request.method === "GET") {
+      const storeReq = new Request("https://do/settings", {
+        method: "GET",
+        headers: {
+          "X-Rork-DO-Class": "OrderStore",
+          "X-Rork-DO-Id": "global",
+        },
+      });
+      const resp = await env.DO.fetch(storeReq);
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
+    // ─── Settings: update (admin) ───────────────────────────────
+    if (url.pathname === "/api/settings" && request.method === "PUT") {
+      const body = await request.json();
+      const storeReq = new Request("https://do/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Rork-DO-Class": "OrderStore",
+          "X-Rork-DO-Id": "global",
+        },
+        body: JSON.stringify(body),
+      });
+      const resp = await env.DO.fetch(storeReq);
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
+    // ─── Admin: verify password ─────────────────────────────────
+    if (url.pathname === "/api/admin/verify" && request.method === "POST") {
+      const body = await request.json();
+      const storeReq = new Request("https://do/admin/verify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Rork-DO-Class": "OrderStore",
+          "X-Rork-DO-Id": "global",
+        },
+        body: JSON.stringify(body),
+      });
+      const resp = await env.DO.fetch(storeReq);
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
+    // ─── Categories ─────────────────────────────────────────────
+    if (url.pathname === "/api/categories" && request.method === "GET") {
+      const storeReq = new Request("https://do/categories", {
+        method: "GET",
+        headers: {
+          "X-Rork-DO-Class": "OrderStore",
+          "X-Rork-DO-Id": "global",
+        },
+      });
+      const resp = await env.DO.fetch(storeReq);
+      return new Response(resp.body, {
+        status: resp.status,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
+    return json({ ok: false, error: "Not found" }, 404);
+  },
+} satisfies ExportedHandler<Env>;
