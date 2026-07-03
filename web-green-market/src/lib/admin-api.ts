@@ -170,6 +170,29 @@ export function cacheAdminPassword(password: string): void {
   }
 }
 
+/* ─── Yandex Go ─────────────────────────────────────────── */
+
+/**
+ * Build a Yandex Go deep link that opens the app with a pre-set route
+ * from the shop to the customer's location.
+ */
+export function buildYandexGoLink(
+  fromLat: number,
+  fromLng: number,
+  toLat: number,
+  toLng: number,
+): string {
+  const params = new URLSearchParams({
+    "start-lat": String(fromLat),
+    "start-lon": String(fromLng),
+    "end-lat": String(toLat),
+    "end-lon": String(toLng),
+    ref: "greenmarket",
+    appmetrica_tracking_id: "1178268795219780156",
+  });
+  return `https://3.redirect.appmetrica.yandex.com/route?${params.toString()}`;
+}
+
 /* ─── Categories ────────────────────────────────────────── */
 
 export async function fetchCategories(): Promise<{ ok: boolean; categories?: string[]; error?: string }> {

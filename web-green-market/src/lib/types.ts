@@ -50,6 +50,10 @@ export interface ShopSettings {
   bannerEnabled: boolean;
   /** Admin password — write-only from client perspective */
   adminPassword?: string;
+  /** Shop latitude for Yandex Go courier routing */
+  shopLat?: number;
+  /** Shop longitude for Yandex Go courier routing */
+  shopLng?: number;
 }
 
 /** Order returned by the backend */

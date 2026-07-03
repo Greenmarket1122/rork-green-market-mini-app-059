@@ -56,6 +56,10 @@ export interface ShopSettings {
   bannerText: string;
   bannerEnabled: boolean;
   adminPassword: string;
+  /** Shop latitude for Yandex Go courier routing */
+  shopLat?: number;
+  /** Shop longitude for Yandex Go courier routing */
+  shopLng?: number;
 }
 
 const DEFAULT_SETTINGS: ShopSettings = {
@@ -69,6 +73,9 @@ const DEFAULT_SETTINGS: ShopSettings = {
   bannerText: "Tanlangan mahsulotlarga 20% gacha chegirma",
   bannerEnabled: true,
   adminPassword: "0215",
+  // Default shop location (Tashkent) — used for Yandex Go courier routing
+  shopLat: 41.31108,
+  shopLng: 69.24062,
 };
 
 const CATEGORIES = [

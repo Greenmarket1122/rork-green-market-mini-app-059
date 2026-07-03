@@ -4,8 +4,10 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  LocateFixed,
   Loader2,
   LogOut,
+  MapPin,
   Package,
   Pencil,
   Phone,
@@ -22,6 +24,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import {
+  buildYandexGoLink,
   createProduct,
   deleteProduct,
   fetchCategories,
@@ -471,13 +474,15 @@ function ProductsTab() {
 
 function OrdersTab() {
   const [orders, setOrders] = useState<OrderData[]>([]);
+  const [shopSettings, setShopSettings] = useState<ShopSettings | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [filterStatus, setFilterStatus] = useState<string>("Hammasi");
 
   const loadOrders = useCallback(async () => {
     setLoading(true);
-    const res = await fetchOrders();
-    if (res.ok && res.orders) setOrders(res.orders);
+    const [ordRes, setRes] = await Promise.all([fetchOrders(), fetchSettings()]);
+    if (ordRes.ok && ordRes.orders) setOrders(ordRes.orders);
+    if (setRes.ok && setRes.settings) setShopSettings(setRes.settings);
     setLoading(false);
   }, []);
 
@@ -614,6 +619,48 @@ function OrdersTab() {
                   </button>
                 ))}
               </div>
+
+              {/* Yandex Go + map buttons */}
+              {order.address.lat !== undefined &&
+                order.address.lng !== undefined && (
+                  <div className="mt-2.5 flex gap-2">
+                    {shopSettings?.shopLat !== undefined &&
+                      shopSettings?.shopLng !== undefined && (
+                        <a
+                          href={buildYandexGoLink(
+                            shopSettings.shopLat,
+                            shopSettings.shopLng,
+                            order.address.lat!,
+                            order.address.lng!,
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={() => hapticTap()}
+                          className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-[#FFCC00] px-3 py-2.5 text-xs font-extrabold text-black transition-transform active:scale-95"
+                        >
+                          <Truck className="h-3.5 w-3.5" />
+                          Yandex Go
+                        </a>
+                      )}
+                    <a
+                      href={`https://yandex.uz/maps/?ll=${order.address.lng}%2C${order.address.lat}&z=17&pt=${order.address.lng},${order.address.lat},pm2rdm`}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => hapticTap()}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-full border border-border bg-secondary px-3 py-2.5 text-xs font-bold text-primary transition-transform active:scale-95"
+                    >
+                      <MapPin className="h-3.5 w-3.5" />
+                      Xarita
+                    </a>
+                    <a
+                      href={`tel:${order.address.phone}`}
+                      onClick={() => hapticTap()}
+                      className="flex items-center justify-center rounded-full border border-border bg-card px-3 py-2.5 text-xs font-bold text-primary transition-transform active:scale-95"
+                    >
+                      <Phone className="h-3.5 w-3.5" />
+                    </a>
+                  </div>
+                )}
             </div>
           ))}
         </div>
@@ -757,6 +804,93 @@ function SettingsTab() {
               onCheckedChange={(v) => setSettings({ ...settings, isOpen: v })}
             />
           </div>
+        </div>
+      </div>
+
+      {/* Yandex Go — shop location */}
+      <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <div className="mb-1 flex items-center gap-2">
+          <MapPin className="h-5 w-5 text-primary" />
+          <h3 className="text-base font-extrabold">Do'kon lokatsiyasi</h3>
+        </div>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Yandex Go kuryer yo'nalishi uchun boshlang'ich nuqta. "Mening lokatsiyam" tugmasi bilan joriy pozitsiyangizni olishingiz yoki qo'lda kiriting.
+        </p>
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                hapticTap();
+                if (!navigator.geolocation) return;
+                navigator.geolocation.getCurrentPosition(
+                  (pos) =>
+                    setSettings({
+                      ...settings,
+                      shopLat: Number(pos.coords.latitude.toFixed(5)),
+                      shopLng: Number(pos.coords.longitude.toFixed(5)),
+                    }),
+                  () => {},
+                  { enableHighAccuracy: true, timeout: 10000 },
+                );
+              }}
+              className="flex items-center gap-1.5 rounded-full border border-border bg-secondary px-4 py-2 text-xs font-bold text-primary transition-transform active:scale-95"
+            >
+              <LocateFixed className="h-3.5 w-3.5" />
+              Mening lokatsiyam
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Kenglik (lat)</label>
+              <input
+                type="number"
+                step="0.00001"
+                className={inputCls}
+                placeholder="41.31108"
+                value={settings.shopLat ?? ""}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    shopLat: e.target.value ? Number(e.target.value) : undefined,
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Uzunlik (lng)</label>
+              <input
+                type="number"
+                step="0.00001"
+                className={inputCls}
+                placeholder="69.24062"
+                value={settings.shopLng ?? ""}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    shopLng: e.target.value ? Number(e.target.value) : undefined,
+                  })
+                }
+              />
+            </div>
+          </div>
+          {settings.shopLat !== undefined &&
+            settings.shopLng !== undefined && (
+              <a
+                href={`https://yandex.uz/map-widget/v1/?ll=${settings.shopLng}%2C${settings.shopLat}&z=17&pt=${settings.shopLng}%2C${settings.shopLat}%2Cpm2gnm`}
+                target="_blank"
+                rel="noreferrer"
+                className="block rounded-2xl overflow-hidden border border-border"
+              >
+                <iframe
+                  title="Do'kon lokatsiyasi"
+                  src={`https://yandex.uz/map-widget/v1/?ll=${settings.shopLng}%2C${settings.shopLat}&z=17&pt=${settings.shopLng}%2C${settings.shopLat}%2Cpm2gnm`}
+                  className="h-40 w-full"
+                  loading="lazy"
+                  style={{ border: 0 }}
+                />
+              </a>
+            )}
         </div>
       </div>
 

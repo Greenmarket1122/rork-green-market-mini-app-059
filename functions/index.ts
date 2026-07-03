@@ -1,5 +1,5 @@
 // functions/index.ts — Green Market Telegram bot backend
-// Admin panel + product/settings management v2
+// Admin panel + product/settings management v2 + Yandex Go integration
 //
 // Handles:
 //   POST   /api/order         — create order, persist via OrderStore DO, notify Telegram
@@ -82,29 +82,102 @@ function formatUZS(amount: number): string {
   return new Intl.NumberFormat("ru-RU").format(amount) + " so'm";
 }
 
+interface InlineButton {
+  text: string;
+  url: string;
+}
+
 async function sendTelegramMessage(
   token: string,
   chatId: string,
   text: string,
+  inlineButtons?: InlineButton[][],
 ): Promise<boolean> {
   try {
+    const body: Record<string, unknown> = {
+      chat_id: chatId,
+      text,
+      parse_mode: "HTML",
+      disable_web_page_preview: false,
+    };
+    if (inlineButtons && inlineButtons.length > 0) {
+      body.reply_markup = {
+        inline_keyboard: inlineButtons.map((row) =>
+          row.map((btn) => ({ text: btn.text, url: btn.url })),
+        ),
+      };
+    }
     const resp = await fetch(
       `https://api.telegram.org/bot${token}/sendMessage`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          parse_mode: "HTML",
-          disable_web_page_preview: false,
-        }),
+        body: JSON.stringify(body),
       },
     );
     return resp.ok;
   } catch {
     return false;
   }
+}
+
+/**
+ * Generate a Yandex Go deep link that opens the app with a pre-set route.
+ * Uses the AppMetrica redirect format which opens Yandex Go if installed,
+ * or redirects to the app store if not.
+ *
+ * @param fromLat - shop latitude
+ * @param fromLng - shop longitude
+ * @param toLat - customer latitude
+ * @param toLng - customer longitude
+ * @returns Yandex Go redirect URL
+ */
+function buildYandexGoLink(
+  fromLat: number,
+  fromLng: number,
+  toLat: number,
+  toLng: number,
+): string {
+  const params = new URLSearchParams({
+    "start-lat": String(fromLat),
+    "start-lon": String(fromLng),
+    "end-lat": String(toLat),
+    "end-lon": String(toLng),
+    ref: "greenmarket",
+    appmetrica_tracking_id: "1178268795219780156",
+  });
+  return `https://3.redirect.appmetrica.yandex.com/route?${params.toString()}`;
+}
+
+/**
+ * Fetch shop settings from the DO to get shop coordinates.
+ */
+async function getShopSettings(
+  env: Env,
+): Promise<{ shopLat?: number; shopLng?: number }> {
+  try {
+    const storeReq = new Request("https://do/settings", {
+      method: "GET",
+      headers: {
+        "X-Rork-DO-Class": "OrderStore",
+        "X-Rork-DO-Id": "global",
+      },
+    });
+    const resp = await env.DO.fetch(storeReq);
+    const result = (await resp.json()) as {
+      ok: boolean;
+      settings?: { shopLat?: number; shopLng?: number };
+    };
+    if (result.ok && result.settings) {
+      return {
+        shopLat: result.settings.shopLat,
+        shopLng: result.settings.shopLng,
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return {};
 }
 
 export default {
@@ -308,10 +381,42 @@ export default {
 
         if (targetChatId) {
           const message = formatOrderMessage(order);
+
+          // Build inline buttons: Yandex Go route + Yandex Map
+          const buttons: InlineButton[][] = [];
+
+          // Yandex Go deep link — only if both shop and customer locations are known
+          if (
+            order.address.lat !== undefined &&
+            order.address.lng !== undefined
+          ) {
+            const shop = await getShopSettings(env);
+            if (shop.shopLat !== undefined && shop.shopLng !== undefined) {
+              const goLink = buildYandexGoLink(
+                shop.shopLat,
+                shop.shopLng,
+                order.address.lat,
+                order.address.lng,
+              );
+              buttons.push([
+                {
+                  text: "🚕 Yandex Go — kuryer chaqirish",
+                  url: goLink,
+                },
+              ]);
+            }
+            // Always show the map link
+            const mapLink = `https://yandex.uz/maps/?ll=${order.address.lng}%2C${order.address.lat}&z=17&pt=${order.address.lng},${order.address.lat},pm2rdm`;
+            buttons.push([
+              { text: "📍 Xaritada ko'rish", url: mapLink },
+            ]);
+          }
+
           const sent = await sendTelegramMessage(
             env.TELEGRAM_BOT_TOKEN,
             targetChatId,
             message,
+            buttons.length > 0 ? buttons : undefined,
           );
           if (!sent) {
             console.warn("Telegram message failed to send");

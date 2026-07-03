@@ -14,7 +14,10 @@ import {
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+// Order tracking with Yandex Go courier integration
 import { fetchOrder, type OrderResponse } from "@/lib/api";
+import { buildYandexGoLink } from "@/lib/admin-api";
+import { useStore } from "@/context/StoreContext";
 import { formatUZS } from "@/lib/products";
 import { hapticTap } from "@/lib/telegram";
 import { cn } from "@/lib/utils";
@@ -29,6 +32,7 @@ const STATUS_STEPS = [
 export default function OrderTracking() {
   const { orderNumber } = useParams<{ orderNumber: string }>();
   const navigate = useNavigate();
+  const { settings } = useStore();
   const [order, setOrder] = useState<OrderResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +74,19 @@ export default function OrderTracking() {
   const mapUrl =
     order?.address.lat !== undefined && order?.address.lng !== undefined
       ? `https://yandex.uz/maps/?ll=${order.address.lng}%2C${order.address.lat}&z=17&pt=${order.address.lng},${order.address.lat},pm2rdm`
+      : undefined;
+
+  const yandexGoUrl =
+    order?.address.lat !== undefined &&
+    order?.address.lng !== undefined &&
+    settings?.shopLat !== undefined &&
+    settings?.shopLng !== undefined
+      ? buildYandexGoLink(
+          settings.shopLat,
+          settings.shopLng,
+          order.address.lat,
+          order.address.lng,
+        )
       : undefined;
 
   return (
@@ -258,15 +275,30 @@ export default function OrderTracking() {
                 </span>
               </div>
               {mapUrl && (
-                <a
-                  href={mapUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-2 rounded-2xl bg-secondary px-4 py-2.5 text-xs font-bold text-primary transition-transform active:scale-95"
-                >
-                  <MapPin className="h-4 w-4" />
-                  Yandex xaritada ko'rish
-                </a>
+                <div className="flex gap-2">
+                  {yandexGoUrl && (
+                    <a
+                      href={yandexGoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => hapticTap()}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-[#FFCC00] px-4 py-2.5 text-xs font-extrabold text-black transition-transform active:scale-95"
+                    >
+                      <Truck className="h-4 w-4" />
+                      Yandex Go
+                    </a>
+                  )}
+                  <a
+                    href={mapUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => hapticTap()}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-secondary px-4 py-2.5 text-xs font-bold text-primary transition-transform active:scale-95"
+                  >
+                    <MapPin className="h-4 w-4" />
+                    Xarita
+                  </a>
+                </div>
               )}
             </div>
           </div>
