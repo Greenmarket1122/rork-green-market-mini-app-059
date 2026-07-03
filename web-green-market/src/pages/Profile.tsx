@@ -4,19 +4,46 @@ import {
   Heart,
   Lock,
   MapPin,
+  Moon,
   PackageSearch,
-  Settings,
+  Phone,
+  Send,
   ShoppingBag,
+  Sun,
   User,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useStore } from "@/context/StoreContext";
 import { getTelegramUser, hapticTap } from "@/lib/telegram";
 
+const THEME_KEY = "gm_theme";
+
 export default function Profile() {
   const { address, wishlist, cartCount, settings } = useStore();
   const tgUser = getTelegramUser();
+  const [, setThemeTick] = useState(0);
+
+  // Re-render when theme changes (from toggle or Telegram theme event)
+  useEffect(() => {
+    const handler = () => setThemeTick((t) => t + 1);
+    window.addEventListener("gm-theme-change", handler);
+    return () => window.removeEventListener("gm-theme-change", handler);
+  }, []);
+
+  const isDark =
+    typeof document !== "undefined" &&
+    document.documentElement.classList.contains("dark");
+
+  const toggleTheme = () => {
+    hapticTap();
+    const root = document.documentElement;
+    const next = !root.classList.contains("dark");
+    root.classList.toggle("dark", next);
+    localStorage.setItem(THEME_KEY, next ? "dark" : "light");
+    setThemeTick((t) => t + 1);
+  };
 
   const displayName = tgUser
     ? `${tgUser.first_name}${tgUser.last_name ? ` ${tgUser.last_name}` : ""}`
@@ -52,10 +79,26 @@ export default function Profile() {
 
   return (
     <div className="mx-auto max-w-md px-4 pb-32 pt-6">
-      <p className="text-xs font-extrabold uppercase tracking-[0.25em] text-primary">
-        {settings?.shopName ?? "Green Market"}
-      </p>
-      <h1 className="mt-1 text-3xl font-extrabold tracking-tight">Profilim</h1>
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-extrabold uppercase tracking-[0.25em] text-primary">
+            {settings?.shopName ?? "Green Market"}
+          </p>
+          <h1 className="mt-1 text-3xl font-extrabold tracking-tight">Profilim</h1>
+        </div>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label="Mavzu o'zgartirish"
+          className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-card shadow-sm transition-transform active:scale-90"
+        >
+          {isDark ? (
+            <Sun className="h-5 w-5 text-accent" />
+          ) : (
+            <Moon className="h-5 w-5 text-primary" />
+          )}
+        </button>
+      </div>
 
       <div className="mt-4 rounded-3xl border border-border bg-card p-6 text-center shadow-sm">
         {tgUser?.photo_url ? (
@@ -91,15 +134,44 @@ export default function Profile() {
               </Link>
             );
           })}
+        </div>
+      </div>
+
+      {/* Support block — always visible */}
+      <div className="mt-4 rounded-3xl border border-border bg-card p-5 shadow-sm">
+        <div className="mb-3 flex items-center gap-2">
+          <Headphones className="h-5 w-5 text-primary" />
+          <h3 className="text-base font-extrabold">Yordam va aloqa</h3>
+        </div>
+        <div className="space-y-2.5">
           <a
-            href={settings?.supportLink ?? "https://t.me/greenmarket_support"}
+            href="tel:+998200012560"
+            onClick={() => hapticTap()}
+            className="flex items-center gap-3 rounded-2xl bg-secondary/60 px-4 py-3.5 transition-transform active:scale-[0.98]"
+          >
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+              <Phone className="h-5 w-5 text-primary" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold">Qo'ng'iroq qilish</p>
+              <p className="text-xs text-muted-foreground">+998 20 001 25 60</p>
+            </div>
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          </a>
+          <a
+            href="tg://user?id=8515369931"
             target="_blank"
             rel="noreferrer"
             onClick={() => hapticTap()}
-            className="flex items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors active:bg-secondary"
+            className="flex items-center gap-3 rounded-2xl bg-secondary/60 px-4 py-3.5 transition-transform active:scale-[0.98]"
           >
-            <Headphones className="h-5 w-5 text-primary" />
-            <span className="flex-1 text-sm font-bold">Support</span>
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#229ED9]/10">
+              <Send className="h-5 w-5 text-[#229ED9]" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold">Telegram orqali murojaat</p>
+              <p className="text-xs text-muted-foreground">To'g'ridan-to'g'ri chat</p>
+            </div>
             <ChevronRight className="h-4 w-4 text-muted-foreground" />
           </a>
         </div>

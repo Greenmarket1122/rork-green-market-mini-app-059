@@ -123,21 +123,23 @@ const LOCAL_PASSWORD_KEY = "gm_admin_password";
 
 /**
  * Verify the admin password.
- * Checks the locally-known password first (so the default "0215"
- * or a previously cached custom password always works, even when
- * the backend is unreachable or running inside a preview iframe).
- * If the local check fails, tries the backend in case the password
- * was changed remotely and not yet cached locally.
+ * 1) Always check the hardcoded default "0215" first — guaranteed to work.
+ * 2) Check a locally cached custom password (if admin changed it).
+ * 3) Fall back to the backend in case the password was changed remotely.
  */
 export async function verifyAdminPassword(password: string): Promise<boolean> {
-  // 1. Local check — always works, no network needed
-  const localPassword =
-    localStorage.getItem(LOCAL_PASSWORD_KEY) ?? DEFAULT_ADMIN_PASSWORD;
-  if (localPassword === password) {
+  // 1. Hardcoded default — always works, zero dependencies
+  if (password === DEFAULT_ADMIN_PASSWORD) {
     return true;
   }
 
-  // 2. Backend check — in case password was changed remotely
+  // 2. Locally cached custom password
+  const cached = localStorage.getItem(LOCAL_PASSWORD_KEY);
+  if (cached && cached === password) {
+    return true;
+  }
+
+  // 3. Backend check — in case password was changed remotely
   try {
     const resp = await fetch(`${API_BASE}/api/admin/verify`, {
       method: "POST",
@@ -147,13 +149,12 @@ export async function verifyAdminPassword(password: string): Promise<boolean> {
     if (resp.ok) {
       const data = (await resp.json()) as { ok: boolean };
       if (data.ok) {
-        // Cache the new password locally for next time
         cacheAdminPassword(password);
         return true;
       }
     }
   } catch {
-    // backend unreachable — local check already failed, return false
+    // backend unreachable — local checks already failed
   }
 
   return false;

@@ -262,12 +262,12 @@ export const PRODUCTS: Product[] = [
   },
 ];
 
-/** Format a UZS amount with thin spaces: 30000 -> "30 000 UZS" */
+/** Format a UZS amount with thin spaces: 30000 -> "30 000 so'm" */
 export function formatUZS(amount: number): string {
   const formatted = Math.round(amount)
     .toString()
     .replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-  return `${formatted} UZS`;
+  return `${formatted} so'm`;
 }
 
 export function getProductById(id: string): Product | undefined {

@@ -21,6 +21,8 @@ interface TelegramWebApp {
   HapticFeedback?: TelegramHapticFeedback;
   setHeaderColor?: (color: string) => void;
   setBackgroundColor?: (color: string) => void;
+  colorScheme?: "light" | "dark";
+  onEvent?: (event: string, handler: () => void) => void;
 }
 
 declare global {
