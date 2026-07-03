@@ -84,7 +84,8 @@ function formatUZS(amount: number): string {
 
 interface InlineButton {
   text: string;
-  url: string;
+  url?: string;
+  web_app?: { url: string };
 }
 
 async function sendTelegramMessage(
@@ -103,7 +104,12 @@ async function sendTelegramMessage(
     if (inlineButtons && inlineButtons.length > 0) {
       body.reply_markup = {
         inline_keyboard: inlineButtons.map((row) =>
-          row.map((btn) => ({ text: btn.text, url: btn.url })),
+          row.map((btn) => {
+            const key: Record<string, unknown> = { text: btn.text };
+            if (btn.url) key.url = btn.url;
+            if (btn.web_app) key.web_app = btn.web_app;
+            return key;
+          }),
         ),
       };
     }
@@ -233,7 +239,18 @@ export default {
             chatId,
             `Assalomu alaykum, ${name}! 👋\n\n` +
               `<b>Green Market</b> botiga xush kelibsiz!\n\n` +
-              `🛒 Buyurtmalarni mini app orqali qabul qilamiz.`,
+              `🛒 Buyurtmalarni mini app orqali qabul qilamiz.\n` +
+              `Pastdagi tugmani bosing va mahsulotlarni tanlang!`,
+            [
+              [
+                {
+                  text: "🛒 Green Market — buyurtma berish",
+                  web_app: {
+                    url: "https://bheef6jwevy37zmpttcxs-web-green-market.rork.live",
+                  },
+                },
+              ],
+            ],
           );
           return json({ ok: true });
         }
