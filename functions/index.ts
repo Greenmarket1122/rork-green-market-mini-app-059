@@ -16,8 +16,8 @@
 //   GET    /api/categories    — list categories
 //   POST   /webhook           — Telegram bot webhook (captures admin chat_id, sends order updates)
 //   GET    /ping              — health check
-
 import { OrderStore, type Order } from "./order-store";
+
 
 export { OrderStore };
 
@@ -25,6 +25,7 @@ type Env = {
   DO: Fetcher;
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_CHAT_ID: string;
+  SUPABASE_SERVICE_KEY: string;
 };
 
 const CORS_HEADERS: Record<string, string> = {
