@@ -82,7 +82,44 @@ function formatOrderMessage(order: Order): string {
 function formatUZS(amount: number): string {
   return new Intl.NumberFormat("ru-RU").format(amount) + " so'm";
 }
+async function saveOrderToSupabase(
+  env: Env,
+  order: Order,
+): Promise<void> {
+  try {
+    const response = await fetch(
+      "https://wucxfpinzsqfsnkvtdcr.supabase.co/rest/v1/orders",
+      {
+        method: "POST",
+        headers: {
+          apikey: env.SUPABASE_SERVICE_KEY,
+          Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          order_number: order.orderNumber,
+          payment_method: order.payment,
+          courier: order.courier,
+          subtotal: order.total,
+          delivery_price: 0,
+          discount: 0,
+          total_price: order.total,
+          status: order.status,
+          note: "",
+          created_at: new Date(order.createdAt).toISOString(),
+          updated_at: new Date(order.createdAt).toISOString(),
+        }),
+      },
+    );
 
+    if (!response.ok) {
+      console.error(await response.text());
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
 interface InlineButton {
   text: string;
   url?: string;
